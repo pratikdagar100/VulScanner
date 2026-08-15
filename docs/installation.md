@@ -242,6 +242,10 @@ docker compose up -d
 The dashboard is then on <http://localhost:8080> and the API on
 <http://localhost:8000>.
 
+Bind those ports to a private interface. The API is an authenticated scanning
+engine and must never be published to the internet - see
+[deployment.md](deployment.md) for what can and cannot be hosted.
+
 ---
 
 ## Building `vulscanner.exe`

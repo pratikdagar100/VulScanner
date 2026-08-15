@@ -241,6 +241,7 @@ Recharts, React Flow.
 | [docs/api.md](docs/api.md) | REST endpoints, authentication, streaming |
 | [docs/security.md](docs/security.md) | Security boundaries, RBAC, data handling |
 | [docs/methodology.md](docs/methodology.md) | How each check works, risk model, confidence levels |
+| [docs/deployment.md](docs/deployment.md) | Hosting the interface, and what must never be published |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | Common problems and their causes |
 
 ---
