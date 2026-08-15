@@ -1,0 +1,431 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VulScanner Security Assessment Report &mdash; Scan #{{ report.meta.scan_id }}</title>
+<style>
+  :root {
+    --ink: #0f1b2a; --muted: #5c7080; --line: #dbe3ea; --bg: #f5f8fa;
+    --panel: #ffffff; --brand: #0b3d63; --brand-soft: #e8f0f6;
+    --critical: #b3123b; --high: #d9480f; --medium: #b58a00;
+    --low: #1c7ed6; --informational: #5c7080;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.55 "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 32px 24px 72px; }
+  header.masthead {
+    background: linear-gradient(135deg, var(--brand), #145184);
+    color: #fff; border-radius: 10px; padding: 28px 32px; margin-bottom: 24px;
+  }
+  .masthead h1 { margin: 0 0 6px; font-size: 26px; letter-spacing: -0.2px; }
+  .masthead .sub { opacity: 0.9; font-size: 13px; }
+  .masthead dl {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px 24px; margin: 20px 0 0;
+  }
+  .masthead dt { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; opacity: .75; }
+  .masthead dd { margin: 2px 0 0; font-size: 14px; font-weight: 600; }
+  section { margin-bottom: 32px; }
+  h2 {
+    font-size: 18px; margin: 0 0 14px; padding-bottom: 8px;
+    border-bottom: 2px solid var(--brand-soft); color: var(--brand);
+  }
+  h3 { font-size: 15px; margin: 22px 0 10px; color: var(--brand); }
+  .panel {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 8px; padding: 18px 20px;
+  }
+  .grid { display: grid; gap: 14px; }
+  .grid.cols-6 { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+  .grid.cols-3 { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+  .stat {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+    padding: 14px 16px;
+  }
+  .stat .label {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
+  }
+  .stat .value { font-size: 26px; font-weight: 700; margin-top: 4px; }
+  .stat.critical .value { color: var(--critical); }
+  .stat.high .value { color: var(--high); }
+  .stat.medium .value { color: var(--medium); }
+  .stat.low .value { color: var(--low); }
+  .score-bar { height: 10px; border-radius: 5px; background: #e4ebf0; overflow: hidden; margin-top: 8px; }
+  .score-bar > span { display: block; height: 100%; background: var(--brand); }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: var(--brand-soft); color: var(--brand); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+  tbody tr:last-child td { border-bottom: none; }
+  .scroll { overflow-x: auto; }
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 999px;
+    font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
+    color: #fff;
+  }
+  .badge.critical { background: var(--critical); }
+  .badge.high { background: var(--high); }
+  .badge.medium { background: var(--medium); }
+  .badge.low { background: var(--low); }
+  .badge.informational { background: var(--informational); }
+  .badge.outline {
+    background: transparent; color: var(--muted); border: 1px solid var(--line);
+  }
+  .finding {
+    background: var(--panel); border: 1px solid var(--line);
+    border-left: 5px solid var(--informational); border-radius: 8px;
+    padding: 16px 18px; margin-bottom: 14px;
+  }
+  .finding.critical { border-left-color: var(--critical); }
+  .finding.high { border-left-color: var(--high); }
+  .finding.medium { border-left-color: var(--medium); }
+  .finding.low { border-left-color: var(--low); }
+  .finding h4 { margin: 0 0 4px; font-size: 15px; }
+  .finding .meta { font-size: 11.5px; color: var(--muted); margin-bottom: 10px; }
+  .finding .block { margin-top: 8px; font-size: 13px; }
+  .finding .block b { color: var(--brand); }
+  pre, code {
+    font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px;
+  }
+  pre {
+    background: #0f1b2a; color: #e6edf3; padding: 10px 12px;
+    border-radius: 6px; overflow-x: auto; margin: 8px 0 0;
+  }
+  .scores { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; }
+  .scores .chip {
+    border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px;
+    font-size: 12px; background: #fff;
+  }
+  .scores .chip b { color: var(--brand); }
+  .note {
+    background: var(--brand-soft); border-left: 4px solid var(--brand);
+    padding: 10px 14px; border-radius: 0 6px 6px 0; font-size: 12.5px;
+  }
+  .warn { background: #fff6e6; border-left-color: var(--medium); }
+  footer {
+    margin-top: 40px; padding-top: 16px; border-top: 1px solid var(--line);
+    font-size: 11.5px; color: var(--muted);
+  }
+  @media print {
+    body { background: #fff; }
+    .finding, .panel, .stat { break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="masthead">
+  <h1>VulScanner Security Assessment Report</h1>
+  <div class="sub">Authorized defensive security assessment &mdash; read-only collection, no exploitation.</div>
+  <dl>
+    <div><dt>Target</dt><dd>{{ report.meta.target }}</dd></div>
+    <div><dt>Scan ID</dt><dd>#{{ report.meta.scan_id }}</dd></div>
+    <div><dt>Profile</dt><dd>{{ report.meta.profile }}</dd></div>
+    <div><dt>Status</dt><dd>{{ report.meta.status }}</dd></div>
+    <div><dt>Scanner version</dt><dd>VulScanner {{ report.meta.scanner_version }}</dd></div>
+    <div><dt>Started</dt><dd>{{ report.meta.started_at or '-' }}</dd></div>
+    <div><dt>Finished</dt><dd>{{ report.meta.finished_at or '-' }}</dd></div>
+    <div><dt>Report generated</dt><dd>{{ report.meta.generated_at }}</dd></div>
+  </dl>
+</header>
+
+<section>
+  <h2>Executive summary</h2>
+  <div class="grid cols-6">
+    <div class="stat">
+      <div class="label">Security score</div>
+      <div class="value">{{ report.executive_summary.security_score }}<span style="font-size:14px;color:var(--muted)">/100</span></div>
+      <div class="score-bar"><span style="width: {{ report.executive_summary.security_score or 0 }}%"></span></div>
+    </div>
+    {% for level in severity_order %}
+    <div class="stat {{ level }}">
+      <div class="label">{{ level }}</div>
+      <div class="value">{{ report.executive_summary.severity_counts[level] }}</div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="grid cols-3" style="margin-top:14px">
+    <div class="panel">
+      <h3 style="margin-top:0">Patch status</h3>
+      <table>
+        <tr><td>Installed updates</td><td><b>{{ report.executive_summary.patch_status.installed }}</b></td></tr>
+        <tr><td>Missing updates</td><td><b>{{ report.executive_summary.patch_status.missing }}</b></td></tr>
+        <tr><td>Missing security updates</td><td><b>{{ report.executive_summary.patch_status.missing_security }}</b></td></tr>
+        <tr><td>Reboot pending</td><td>{{ 'Yes' if report.executive_summary.patch_status.pending_reboot else 'No' }}</td></tr>
+        <tr><td>Evidence quality</td><td>{{ report.executive_summary.patch_status.evidence_quality }}</td></tr>
+      </table>
+    </div>
+    <div class="panel">
+      <h3 style="margin-top:0">Network exposure</h3>
+      <table>
+        <tr><td>Listening ports</td><td><b>{{ report.executive_summary.network_exposure.listening_ports }}</b></td></tr>
+        <tr><td>Network reachable</td><td><b>{{ report.executive_summary.network_exposure.network_reachable_ports }}</b></td></tr>
+        <tr><td>Discovered hosts</td><td><b>{{ report.executive_summary.network_exposure.discovered_hosts }}</b></td></tr>
+        <tr><td>Topology edges observed</td><td>{{ report.topology.observed_count }}</td></tr>
+        <tr><td>Topology edges inferred</td><td>{{ report.topology.inferred_count }}</td></tr>
+      </table>
+    </div>
+    <div class="panel">
+      <h3 style="margin-top:0">Vulnerabilities</h3>
+      <table>
+        <tr><td>Correlated vulnerabilities</td><td><b>{{ report.executive_summary.vulnerability_count }}</b></td></tr>
+        <tr><td>In CISA KEV catalogue</td><td><b>{{ report.executive_summary.kev_vulnerability_count }}</b></td></tr>
+        <tr><td>Total findings</td><td><b>{{ report.executive_summary.total_findings }}</b></td></tr>
+        <tr><td>Highest risk score</td><td>{{ report.executive_summary.highest_risk_score }}</td></tr>
+        <tr><td>Assets assessed</td><td>{{ report.executive_summary.asset_count }}</td></tr>
+      </table>
+    </div>
+  </div>
+
+  {% if report.executive_summary.warnings %}
+  <div class="note warn" style="margin-top:14px">
+    <b>Collection warnings ({{ report.executive_summary.warnings|length }}).</b>
+    Some data could not be fully read. Affected areas are reported as incomplete rather than assumed secure.
+    <ul>{% for warning in report.executive_summary.warnings[:12] %}<li>{{ warning }}</li>{% endfor %}</ul>
+  </div>
+  {% endif %}
+</section>
+
+{% if report.asset %}
+<section>
+  <h2>Assessed asset</h2>
+  <div class="panel scroll">
+    <table>
+      <tr><th>Hostname</th><td>{{ report.asset.hostname or '-' }}</td><th>IP address</th><td>{{ report.asset.ip_address or '-' }}</td></tr>
+      <tr><th>Operating system</th><td>{{ report.asset.os_name or '-' }}</td><th>Version / build</th><td>{{ report.asset.os_version or '-' }} ({{ report.asset.os_build or '-' }})</td></tr>
+      <tr><th>Edition</th><td>{{ report.asset.os_edition or '-' }}</td><th>Architecture</th><td>{{ report.asset.architecture or '-' }}</td></tr>
+      <tr><th>Domain / workgroup</th><td>{{ report.asset.domain or '-' }}</td><th>MAC address</th><td>{{ report.asset.mac_address or '-' }}</td></tr>
+      <tr><th>Criticality</th><td>{{ report.asset.criticality }}</td><th>Asset risk</th><td>{{ report.asset.risk_score }} ({{ report.asset.severity }})</td></tr>
+      <tr><th>First seen</th><td>{{ report.asset.first_seen or '-' }}</td><th>Last seen</th><td>{{ report.asset.last_seen or '-' }}</td></tr>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+<section>
+  <h2>Findings</h2>
+  <div class="note">
+    The <b>VulScanner risk score</b> describes this weakness on this asset &mdash; it combines the base
+    severity with network exposure, exploitation intelligence (CISA KEV), detection confidence and asset
+    criticality. Where a CVE is involved, the <b>official CVSS base score</b> is shown separately and is
+    never merged into the VulScanner score.
+  </div>
+
+  {% for level in severity_order %}
+    {% set bucket = report.findings_by_severity[level] %}
+    {% if bucket %}
+      <h3>{{ level|capitalize }} ({{ bucket|length }})</h3>
+      {% for finding in bucket %}
+      <article class="finding {{ finding.severity }}">
+        <h4>{{ finding.title }}</h4>
+        <div class="meta">
+          <span class="badge {{ finding.severity }}">{{ finding.severity }}</span>
+          <span class="badge outline">{{ finding.finding_uid }}</span>
+          <span class="badge outline">{{ finding.category }}</span>
+          <span class="badge outline">confidence: {{ finding.confidence }}</span>
+          <span class="badge outline">status: {{ finding.status }}</span>
+        </div>
+        <div class="scores">
+          <span class="chip">VulScanner risk score <b>{{ finding.risk_score }}</b>/100</span>
+          {% if finding.cvss_score is not none %}
+          <span class="chip">Official CVSS <b>{{ finding.cvss_score }}</b></span>
+          {% endif %}
+          <span class="chip">Detected via <b>{{ finding.detection_method }}</b></span>
+        </div>
+        <div class="block">{{ finding.description }}</div>
+        <div class="block"><b>Impact.</b> {{ finding.impact }}</div>
+        <div class="block"><b>Evidence.</b> {{ finding.evidence_summary }}</div>
+        <div class="block"><b>Remediation.</b> {{ finding.remediation }}</div>
+        {% if finding.remediation_command %}
+        <pre>{{ finding.remediation_command }}</pre>
+        {% endif %}
+        {% if finding.references %}
+        <div class="block"><b>References.</b>
+          {% for reference in finding.references %}<a href="{{ reference }}">{{ reference }}</a>{% if not loop.last %} &middot; {% endif %}{% endfor %}
+        </div>
+        {% endif %}
+        {% if finding.evidence %}
+        <details class="block">
+          <summary><b>Full evidence</b></summary>
+          <pre>{{ finding.evidence | pretty_json }}</pre>
+        </details>
+        {% endif %}
+        {% if finding.risk_factors %}
+        <details class="block">
+          <summary><b>How this risk score was calculated</b></summary>
+          <pre>{{ finding.risk_factors | pretty_json }}</pre>
+        </details>
+        {% endif %}
+      </article>
+      {% endfor %}
+    {% endif %}
+  {% endfor %}
+
+  {% if not report.findings %}
+  <div class="panel">No findings were raised by this scan.</div>
+  {% endif %}
+</section>
+
+{% if report.vulnerabilities %}
+<section>
+  <h2>Correlated vulnerabilities</h2>
+  <div class="panel scroll">
+    <table>
+      <thead><tr>
+        <th>CVE / KB</th><th>Product</th><th>Installed</th><th>Affected range</th>
+        <th>Official CVSS</th><th>VulScanner risk</th><th>KEV</th><th>Confidence</th><th>Match method</th>
+      </tr></thead>
+      <tbody>
+      {% for vulnerability in report.vulnerabilities %}
+        <tr>
+          <td><b>{{ vulnerability.cve_id }}</b></td>
+          <td>{{ vulnerability.product }}</td>
+          <td>{{ vulnerability.product_version }}</td>
+          <td>{{ vulnerability.affected_versions }}</td>
+          <td>{{ vulnerability.cvss_score if vulnerability.cvss_score is not none else '-' }}</td>
+          <td><span class="badge {{ vulnerability.severity }}">{{ vulnerability.risk_score }}</span></td>
+          <td>{{ 'Yes' if vulnerability.kev else 'No' }}</td>
+          <td>{{ vulnerability.confidence }}</td>
+          <td>{{ vulnerability.match_method }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+<section>
+  <h2>Ports and services</h2>
+  <div class="panel scroll">
+    <table>
+      <thead><tr><th>Port</th><th>Protocol</th><th>Service</th><th>Local address</th><th>Exposure</th><th>Process</th><th>Owning service</th><th>Port risk</th></tr></thead>
+      <tbody>
+      {% for port in report.ports[:200] %}
+        <tr>
+          <td><b>{{ port.port }}</b></td><td>{{ port.protocol }}</td><td>{{ port.service or '-' }}</td>
+          <td>{{ port.local_address or '-' }}</td><td>{{ port.exposure }}</td>
+          <td>{{ port.process_name or '-' }}{% if port.process_id %} ({{ port.process_id }}){% endif %}</td>
+          <td>{{ port.owning_service or '-' }}</td><td>{{ port.risk_score }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% if report.ports|length > 200 %}<p class="meta">Showing the first 200 of {{ report.ports|length }} entries.</p>{% endif %}
+  </div>
+</section>
+
+{% if report.discovered_hosts %}
+<section>
+  <h2>Discovered hosts</h2>
+  <div class="panel scroll">
+    <table>
+      <thead><tr><th>IP address</th><th>Hostname</th><th>MAC</th><th>Vendor</th><th>OS (inferred)</th><th>Confidence</th><th>Discovery method</th><th>Gateway</th></tr></thead>
+      <tbody>
+      {% for host in report.discovered_hosts %}
+        <tr>
+          <td><b>{{ host.ip_address }}</b></td><td>{{ host.hostname or '-' }}</td>
+          <td>{{ host.mac_address or '-' }}</td><td>{{ host.vendor or '-' }}</td>
+          <td>{{ host.os_guess or 'Unknown' }}</td><td>{{ host.os_confidence }}</td>
+          <td>{{ host.discovery_method }}</td><td>{{ 'Yes' if host.is_gateway else 'No' }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+{% if report.topology.edges %}
+<section>
+  <h2>Network topology</h2>
+  <div class="note">
+    Edges marked <b>observed</b> are directly evidenced (neighbour cache, routing table, LLDP/CDP import).
+    Edges marked <b>inferred</b> are deduced from IP addressing and describe logical reachability &mdash;
+    they are not verified physical cabling.
+  </div>
+  <div class="panel scroll" style="margin-top:12px">
+    <table>
+      <thead><tr><th>Source</th><th>Target</th><th>Type</th><th>Confidence</th><th>Label</th><th>Evidence</th></tr></thead>
+      <tbody>
+      {% for edge in report.topology.edges %}
+        <tr>
+          <td>{{ edge.source }}</td><td>{{ edge.target }}</td><td>{{ edge.type }}</td>
+          <td><span class="badge {{ 'low' if edge.confidence == 'observed' else 'outline' }}">{{ edge.confidence }}</span></td>
+          <td>{{ edge.label }}</td>
+          <td>{{ edge.evidence.get('source', '') if edge.evidence else '' }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+<section>
+  <h2>Remediation plan</h2>
+  <div class="note">{{ report.remediation.summary.policy }}</div>
+  <div class="panel scroll" style="margin-top:12px">
+    <table>
+      <thead><tr><th>Priority</th><th>Finding</th><th>Severity</th><th>Fix within</th><th>Effort</th><th>Reboot</th><th>Recommended fix</th></tr></thead>
+      <tbody>
+      {% for item in report.remediation['items'] %}
+        <tr>
+          <td>{{ item.priority }}</td>
+          <td>{{ item.title }}</td>
+          <td><span class="badge {{ item.severity }}">{{ item.severity }}</span></td>
+          <td>{{ (item.sla_days ~ ' days') if item.sla_days else '-' }}</td>
+          <td>{{ item.effort }}</td>
+          <td>{{ 'Yes' if item.requires_reboot else 'No' }}</td>
+          <td>{{ item.recommended_fix }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2>Collection evidence</h2>
+  <div class="panel scroll">
+    <table>
+      <thead><tr><th>Collector</th><th>Category</th><th>Status</th><th>Method</th><th>Collected at</th><th>Duration</th><th>Warnings</th></tr></thead>
+      <tbody>
+      {% for collector in report.collectors %}
+        <tr>
+          <td><b>{{ collector.collector }}</b></td><td>{{ collector.category }}</td>
+          <td>{{ collector.status }}</td><td>{{ collector.collection_method }}</td>
+          <td>{{ collector.collected_at or '-' }}</td>
+          <td>{{ '%.2f'|format(collector.duration_seconds or 0) }}s</td>
+          <td>{{ (collector.warnings or []) | join('; ') }}{{ (collector.errors or []) | join('; ') }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2>Methodology and limitations</h2>
+  <div class="panel">
+    {% for key, text in report.methodology.items() %}
+    <p><b>{{ key.replace('_', ' ')|capitalize }}.</b> {{ text }}</p>
+    {% endfor %}
+  </div>
+</section>
+
+<footer>
+  VulScanner {{ report.meta.scanner_version }} &mdash; scan #{{ report.meta.scan_id }} of
+  {{ report.meta.target }}, executed from {{ report.meta.scanner_host or 'unknown host' }}.
+  This report documents an authorized defensive security assessment. No exploitation was performed and
+  no credential, hash or private key material was collected.
+</footer>
+
+</div>
+</body>
+</html>

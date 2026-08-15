@@ -1,0 +1,51 @@
+# --- Python ---------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# --- Node -----------------------------------------------------------------
+node_modules/
+frontend/dist/
+*.tsbuildinfo
+npm-debug.log*
+
+# --- Build artefacts ------------------------------------------------------
+dist/
+build/
+*.spec
+
+# --- VulScanner runtime data ---------------------------------------------
+# Scan results, reports and caches are operational data, not source.
+*.db
+*.db-shm
+*.db-wal
+vulscanner.db*
+migration_check.db
+logs/
+cache/
+reports/generated/
+!reports/generated/.gitkeep
+
+# --- Secrets --------------------------------------------------------------
+# .env holds the signing key and any database or API credentials.
+.env
+.env.local
+.env.*.local
+*.pem
+*.pfx
+*.key
+
+# --- OS / editor ----------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp

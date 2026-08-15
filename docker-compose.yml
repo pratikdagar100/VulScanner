@@ -1,0 +1,83 @@
+# VulScanner - management plane (API, database, dashboard, reporting).
+#
+# Windows collection requires a Windows host: run the VulScanner CLI or a
+# Windows-hosted API instance for that. This compose file is for the API,
+# PostgreSQL, the web application and network discovery of authorized scopes
+# reachable from the container.
+#
+#   1. cp .env.example .env  and set VULSCANNER_SECRET_KEY + a database password
+#   2. docker compose up -d
+#   3. open http://localhost:8080
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: vulscanner-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-vulscanner}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-vulscanner}
+    volumes:
+      - vulscanner-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vulscanner}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [vulscanner]
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: vulscanner-api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      VULSCANNER_ENV: production
+      VULSCANNER_SECRET_KEY: ${VULSCANNER_SECRET_KEY:?generate one with python -c "import secrets; print(secrets.token_urlsafe(64))"}
+      VULSCANNER_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-vulscanner}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-vulscanner}
+      # Only these scopes may be assessed. Narrow this to your authorized range.
+      VULSCANNER_AUTHORIZED_SCOPES: ${VULSCANNER_AUTHORIZED_SCOPES:-127.0.0.0/8,192.168.0.0/16,10.0.0.0/8,172.16.0.0/12}
+      VULSCANNER_CORS_ORIGINS: ${VULSCANNER_CORS_ORIGINS:-http://localhost:8080}
+      VULSCANNER_NVD_API_KEY: ${VULSCANNER_NVD_API_KEY:-}
+      VULSCANNER_BOOTSTRAP_ADMIN_USERNAME: ${VULSCANNER_BOOTSTRAP_ADMIN_USERNAME:-admin}
+      VULSCANNER_BOOTSTRAP_ADMIN_PASSWORD: ${VULSCANNER_BOOTSTRAP_ADMIN_PASSWORD:-}
+      VULSCANNER_LOG_DIR: /app/logs
+      VULSCANNER_CVE_CACHE_DIR: /app/cache/cve
+      VULSCANNER_REPORT_DIR: /app/reports/generated
+    volumes:
+      - vulscanner-reports:/app/reports/generated
+      - vulscanner-cache:/app/cache
+      - vulscanner-logs:/app/logs
+    ports:
+      - "${VULSCANNER_API_PORT:-8000}:8000"
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers"
+    networks: [vulscanner]
+
+  web:
+    image: nginx:1.27-alpine
+    container_name: vulscanner-web
+    restart: unless-stopped
+    depends_on: [api]
+    volumes:
+      - ./frontend/dist:/usr/share/nginx/html:ro
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "${VULSCANNER_WEB_PORT:-8080}:80"
+    networks: [vulscanner]
+
+volumes:
+  vulscanner-db:
+  vulscanner-reports:
+  vulscanner-cache:
+  vulscanner-logs:
+
+networks:
+  vulscanner:
+    driver: bridge

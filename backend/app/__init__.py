@@ -1,0 +1,1 @@
+"""VulScanner backend application."""

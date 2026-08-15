@@ -1,0 +1,23 @@
+# VulScanner backend requirements
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+pydantic-settings==2.7.0
+SQLAlchemy==2.0.36
+alembic==1.14.0
+python-multipart==0.0.20
+bcrypt==4.2.1
+PyJWT==2.10.1
+httpx==0.28.1
+jinja2==3.1.5
+# PDF generation is pure Python (ReportLab) - no external binary is required.
+reportlab==4.2.5
+psutil==6.1.1
+python-dotenv==1.0.1
+
+# Production database driver (optional for dev)
+psycopg[binary]==3.2.3 ; platform_system != "Windows" or python_version < "4"
+
+# Testing
+pytest==8.3.4
+pytest-asyncio==0.25.0
