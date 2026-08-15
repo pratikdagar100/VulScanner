@@ -67,11 +67,38 @@ function Get-PortOwner {
         Select-Object -First 1
     if (-not $listener) { return $null }
 
-    $info = [ordered]@{ Port = $Port; ProcessId = $listener.OwningProcess; Started = $null; Command = '' }
-    $process = Get-Process -Id $listener.OwningProcess -ErrorAction SilentlyContinue
+    $ownerId = $listener.OwningProcess
+    $info = [ordered]@{
+        Port      = $Port
+        ProcessId = $ownerId
+        Started   = $null
+        Command   = ''
+        Orphaned  = $false
+        KillIds   = @($ownerId)
+    }
+
+    $process = Get-Process -Id $ownerId -ErrorAction SilentlyContinue
     if ($process) { $info.Started = $process.StartTime }
-    $cim = Get-CimInstance Win32_Process -Filter "ProcessId=$($listener.OwningProcess)" -ErrorAction SilentlyContinue
+    $cim = Get-CimInstance Win32_Process -Filter "ProcessId=$ownerId" -ErrorAction SilentlyContinue
     if ($cim) { $info.Command = $cim.CommandLine }
+
+    if (-not $process -and -not $cim) {
+        # The socket outlives its creator: uvicorn's reloader hands the listening
+        # socket to a worker it spawns, so killing the reloader leaves an orphan
+        # that keeps serving while Windows still attributes the port to the dead
+        # parent. Stopping the reported PID then fails with "cannot find a
+        # process", and the stale server survives. Find the real children.
+        $info.Orphaned = $true
+        $children = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.ParentProcessId -eq $ownerId -or
+                $_.CommandLine -match "parent_pid=$ownerId"
+            }
+        if ($children) {
+            $info.KillIds = @($children | ForEach-Object { $_.ProcessId })
+            $info.Command = ($children | Select-Object -First 1).CommandLine
+        }
+    }
     [pscustomobject]$info
 }
 
@@ -82,23 +109,44 @@ function Assert-PortFree {
     if (-not $owner) { return }
 
     if ($StopExisting) {
-        Write-Host "[*] Stopping the existing $Label on port $Port (PID $($owner.ProcessId))..." -ForegroundColor Cyan
-        try {
-            Stop-Process -Id $owner.ProcessId -Force -ErrorAction Stop
-            Start-Sleep -Seconds 2
-            if (Get-PortOwner -Port $Port) { throw 'port still held' }
-            Write-Host "    [ok] Stopped." -ForegroundColor Green
-            return
-        } catch {
-            Write-Host "    [x]  Could not stop PID $($owner.ProcessId). If it was started" -ForegroundColor Red
-            Write-Host "         elevated, re-run this script as Administrator." -ForegroundColor Red
-            exit 1
+        $targets = @($owner.KillIds) -join ', '
+        Write-Host "[*] Stopping the existing $Label on port $Port (PID $targets)..." -ForegroundColor Cyan
+        if ($owner.Orphaned) {
+            Write-Host "    Socket is owned by dead PID $($owner.ProcessId); stopping the orphaned worker instead." -ForegroundColor DarkGray
         }
+
+        $stopped = $false
+        foreach ($id in $owner.KillIds) {
+            try {
+                Stop-Process -Id $id -Force -ErrorAction Stop
+                $stopped = $true
+            } catch {
+                Write-Host "    [!]  Could not stop PID ${id}: $($_.Exception.Message)" -ForegroundColor Yellow
+            }
+        }
+
+        # The port is the thing that matters, so verify that rather than the kill.
+        Start-Sleep -Seconds 2
+        if (-not (Get-PortOwner -Port $Port)) {
+            Write-Host "    [ok] Port $Port released." -ForegroundColor Green
+            return
+        }
+
+        Write-Host "    [x]  Port $Port is still held after stopping $(if ($stopped) { 'the process' } else { 'nothing' })." -ForegroundColor Red
+        Write-Host "         If the owner was started elevated, re-run this script as Administrator." -ForegroundColor Red
+        Write-Host "         Otherwise find it with:" -ForegroundColor Red
+        Write-Host "           Get-NetTCPConnection -LocalPort $Port -State Listen" -ForegroundColor Cyan
+        Write-Host "           Get-CimInstance Win32_Process | Where-Object { `$_.CommandLine -match 'uvicorn|vite' }" -ForegroundColor Cyan
+        exit 1
     }
 
     Write-Host "[x] Port $Port is already in use - VulScanner will not start a second $Label." -ForegroundColor Red
     Write-Host ""
     Write-Host "    Held by PID $($owner.ProcessId)$(if ($owner.Started) { ", started $($owner.Started.ToString('HH:mm:ss'))" })" -ForegroundColor Yellow
+    if ($owner.Orphaned) {
+        Write-Host "    That PID no longer exists - the listening socket was inherited by a" -ForegroundColor Yellow
+        Write-Host "    worker it spawned (PID $(@($owner.KillIds) -join ', ')), which is still serving." -ForegroundColor Yellow
+    }
     if ($owner.Command) {
         Write-Host "    $($owner.Command.Substring(0, [Math]::Min(100, $owner.Command.Length)))" -ForegroundColor DarkGray
     }
