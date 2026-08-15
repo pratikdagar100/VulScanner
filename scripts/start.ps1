@@ -15,12 +15,18 @@
 
 .PARAMETER Production
     Production mode: requires a built frontend and a configured secret key.
+
+.PARAMETER StopExisting
+    Stop whatever already holds the API or web port, then start fresh. Use this
+    after changing code or when re-launching elevated - a leftover process keeps
+    serving the code it loaded at startup.
 #>
 [CmdletBinding()]
 param(
     [switch]$ApiOnly,
     [switch]$NoBrowser,
     [switch]$Production,
+    [switch]$StopExisting,
     [int]$ApiPort = 8000,
     [int]$WebPort = 5173
 )
@@ -46,6 +52,70 @@ Write-Host "  Stop           Ctrl+C`n"
 if ($Production -and -not (Test-Path (Join-Path $RepoRoot 'frontend\dist\index.html'))) {
     Write-Host "[!] No production frontend build found. Run .\scripts\build.ps1 first." -ForegroundColor Yellow
 }
+
+# ---------------------------------------------------------------------------
+# Refuse to start alongside an existing instance.
+#
+# Without this check a leftover server keeps the port, the new one fails to
+# bind and exits, and the readiness probe below still succeeds - because it is
+# answered by the old process. The result is a VulScanner that appears to be
+# running while silently serving stale code from a previous session.
+# ---------------------------------------------------------------------------
+function Get-PortOwner {
+    param([int]$Port)
+    $listener = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if (-not $listener) { return $null }
+
+    $info = [ordered]@{ Port = $Port; ProcessId = $listener.OwningProcess; Started = $null; Command = '' }
+    $process = Get-Process -Id $listener.OwningProcess -ErrorAction SilentlyContinue
+    if ($process) { $info.Started = $process.StartTime }
+    $cim = Get-CimInstance Win32_Process -Filter "ProcessId=$($listener.OwningProcess)" -ErrorAction SilentlyContinue
+    if ($cim) { $info.Command = $cim.CommandLine }
+    [pscustomobject]$info
+}
+
+function Assert-PortFree {
+    param([int]$Port, [string]$Label)
+
+    $owner = Get-PortOwner -Port $Port
+    if (-not $owner) { return }
+
+    if ($StopExisting) {
+        Write-Host "[*] Stopping the existing $Label on port $Port (PID $($owner.ProcessId))..." -ForegroundColor Cyan
+        try {
+            Stop-Process -Id $owner.ProcessId -Force -ErrorAction Stop
+            Start-Sleep -Seconds 2
+            if (Get-PortOwner -Port $Port) { throw 'port still held' }
+            Write-Host "    [ok] Stopped." -ForegroundColor Green
+            return
+        } catch {
+            Write-Host "    [x]  Could not stop PID $($owner.ProcessId). If it was started" -ForegroundColor Red
+            Write-Host "         elevated, re-run this script as Administrator." -ForegroundColor Red
+            exit 1
+        }
+    }
+
+    Write-Host "[x] Port $Port is already in use - VulScanner will not start a second $Label." -ForegroundColor Red
+    Write-Host ""
+    Write-Host "    Held by PID $($owner.ProcessId)$(if ($owner.Started) { ", started $($owner.Started.ToString('HH:mm:ss'))" })" -ForegroundColor Yellow
+    if ($owner.Command) {
+        Write-Host "    $($owner.Command.Substring(0, [Math]::Min(100, $owner.Command.Length)))" -ForegroundColor DarkGray
+    }
+    Write-Host ""
+    Write-Host "    That process is most likely an earlier VulScanner session. It will keep" -ForegroundColor Yellow
+    Write-Host "    answering requests with the code it loaded at startup, so recent changes" -ForegroundColor Yellow
+    Write-Host "    and elevation will not apply until it is replaced." -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "    Restart cleanly:   .\scripts\start.ps1 -StopExisting" -ForegroundColor Cyan
+    Write-Host "    Or stop it:        Stop-Process -Id $($owner.ProcessId) -Force" -ForegroundColor Cyan
+    Write-Host "    Or use new ports:  .\scripts\start.ps1 -ApiPort 8001 -WebPort 5174" -ForegroundColor Cyan
+    Write-Host ""
+    exit 1
+}
+
+Assert-PortFree -Port $ApiPort -Label 'API'
+if (-not $ApiOnly) { Assert-PortFree -Port $WebPort -Label 'web application' }
 
 $jobs = @()
 

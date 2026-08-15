@@ -6,8 +6,10 @@ Run with:
 
 from __future__ import annotations
 
+import os
 import platform
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 from fastapi import Depends, FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
@@ -23,6 +25,11 @@ from app.db.init_db import init_db
 from app.scanner.runner import find_powershell
 
 logger = get_logger(__name__)
+
+# Stamped once at import so /api/health can prove which process is answering.
+# A stale server left holding the port is otherwise indistinguishable from a
+# freshly started one.
+PROCESS_STARTED_AT = datetime.now(tz=timezone.utc)
 
 
 @asynccontextmanager
@@ -145,6 +152,12 @@ def health() -> dict:
         "product": "VulScanner",
         "version": APP_VERSION,
         "environment": settings.env,
+        # Identity of the answering process, so a leftover instance is obvious.
+        "process_id": os.getpid(),
+        "started_at": PROCESS_STARTED_AT.isoformat(),
+        "uptime_seconds": round(
+            (datetime.now(tz=timezone.utc) - PROCESS_STARTED_AT).total_seconds(), 1
+        ),
         "platform": platform.system(),
         "windows_collection_available": platform.system() == "Windows"
         and bool(find_powershell()),
