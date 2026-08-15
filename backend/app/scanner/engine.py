@@ -52,6 +52,9 @@ class ScanOutput:
     duration_seconds: float = 0.0
     scanner_version: str = APP_VERSION
     scanner_host: str = ""
+    #: local-authenticated | remote-authenticated | remote-unauthenticated |
+    #: network-discovery | unsupported-platform
+    assessment_mode: str = "local-authenticated"
 
     results: list[CollectorResult] = field(default_factory=list)
     discovery: dict[str, Any] = field(default_factory=dict)
@@ -94,6 +97,7 @@ class ScanOutput:
             "duration_seconds": round(self.duration_seconds, 2),
             "scanner_version": self.scanner_version,
             "scanner_host": self.scanner_host,
+            "assessment_mode": self.assessment_mode,
             "elevated": self.elevated,
             "results": [r.to_dict() for r in self.results],
             "discovery": self.discovery,
@@ -144,14 +148,17 @@ class ScanEngine:
             profile=context.profile,
             started_at=started,
             scanner_host=context.scanner_host,
+            assessment_mode=context.assessment_mode,
         )
 
         try:
             self._preflight(output)
-            if context.is_network_scope:
-                self._run_scanner_context_collectors(output)
-            else:
+            if context.is_windows_target:
                 self._run_collectors(output)
+            else:
+                # No authenticated access: assess whatever the target exposes
+                # from the outside rather than producing an empty scan.
+                self._run_scanner_context_collectors(output)
             if self._should_discover():
                 self._run_discovery(output)
             self._build_topology(output)
@@ -174,6 +181,18 @@ class ScanEngine:
         context.report_progress("preflight", 0.0, "Validating target and environment")
 
         if context.is_network_scope:
+            return
+
+        if context.is_unauthenticated_remote:
+            # State the scan's real scope up front so nobody reads an empty
+            # Windows section as "this host is clean".
+            output.warnings.append(
+                f"Unauthenticated assessment of {context.target}: no credentials "
+                "were supplied, so VulScanner assessed only what the host exposes "
+                "to the network (open ports, services and banners). Windows "
+                "configuration, patches, accounts and policy were NOT assessed - "
+                "supply WinRM credentials for those."
+            )
             return
 
         if context.is_local and platform.system() != "Windows":
@@ -280,15 +299,24 @@ class ScanEngine:
         context = self.context
         if context.is_network_scope:
             return True
+        if context.is_unauthenticated_remote:
+            # Without credentials this is the only assessment available, so it
+            # always runs rather than being opt-in.
+            return True
         return bool(context.option("network_discovery", False))
 
     def _run_discovery(self, output: ScanOutput) -> None:
         context = self.context
         context.raise_if_cancelled()
 
-        scope = context.option("discovery_scope") or (
-            context.authorization.normalized if context.is_network_scope else ""
-        )
+        scope = context.option("discovery_scope") or ""
+        if not scope and context.is_network_scope:
+            scope = context.authorization.normalized
+        if not scope and context.is_unauthenticated_remote:
+            # Assess the single host that was asked for. A hostname is resolved
+            # so the probe targets the address authorization was checked against.
+            resolved = context.authorization.resolved_ips
+            scope = resolved[0] if resolved else context.authorization.normalized
         if not scope:
             # Fall back to the locally attached subnets we already collected.
             subnets = output.data("adapters").get("local_subnets", [])
@@ -312,7 +340,23 @@ class ScanEngine:
             output.errors.append(str(exc))
             return
 
-        discovery_profile = context.option("discovery_profile", "safe")
+        single_host = len(hosts) == 1
+        # Sweeping one host is cheap, so an unauthenticated assessment uses the
+        # broader service set and reads banners by default - that identification
+        # is the only evidence available without credentials.
+        unauthenticated_single_host = single_host and context.is_unauthenticated_remote
+        default_profile = "standard" if unauthenticated_single_host else "safe"
+        discovery_profile = context.option("discovery_profile") or default_profile
+
+        # None means "not specified", which is not the same as "disabled" - only
+        # an explicit false from the operator turns banner reading off.
+        configured_banner = context.option("banner_grab")
+        banner_grab = (
+            unauthenticated_single_host
+            if configured_banner is None
+            else bool(configured_banner)
+        )
+
         ports = context.option("ports")
         if isinstance(ports, str):
             ports = parse_port_range(ports)
@@ -339,7 +383,7 @@ class ScanEngine:
             ports=ports,
             timeout=float(context.option("portscan_timeout", 0) or 0) or None,
             concurrency=context.option("discovery_concurrency"),
-            banner_grab=bool(context.option("banner_grab", False)),
+            banner_grab=bool(banner_grab),
             resolve_names=bool(context.option("resolve_names", True)),
             cancel_check=lambda: context.cancelled,
         )

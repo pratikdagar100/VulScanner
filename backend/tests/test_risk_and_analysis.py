@@ -252,3 +252,112 @@ class TestTopology:
         assert is_host_address("224.0.0.251") is False
         assert is_host_address("ff02::fb") is False
         assert is_host_address("255.255.255.255") is False
+
+
+class TestAssessmentMode:
+    """A target that cannot be authenticated to must still be assessed."""
+
+    def _context(self, target: str, credential=None):
+        from app.core.permissions import authorize_target
+        from app.scanner.context import ScanContext
+
+        return ScanContext(
+            authorization=authorize_target(target), credential=credential
+        )
+
+    def test_remote_without_credentials_is_unauthenticated_not_unsupported(self):
+        context = self._context("192.168.1.50")
+        assert context.assessment_mode == "remote-unauthenticated"
+        assert context.is_unauthenticated_remote is True
+        assert context.is_windows_target is False
+
+    def test_remote_with_credentials_is_authenticated(self):
+        from app.scanner.runner import RemoteCredential
+
+        context = self._context(
+            "192.168.1.50", RemoteCredential(username="admin", password="x")
+        )
+        assert context.assessment_mode == "remote-authenticated"
+        assert context.is_windows_target is True
+
+    def test_network_scope_mode(self):
+        assert self._context("192.168.1.0/24").assessment_mode == "network-discovery"
+
+    def test_skip_reason_is_specific_and_actionable(self):
+        """The generic 'requires a Windows target' told operators nothing."""
+        reason = self._context("192.168.1.50").windows_collection_reason()
+        assert "192.168.1.50" in reason
+        assert "credentials" in reason.lower()
+        assert "unauthenticated" in reason.lower()
+
+    def test_scope_scan_reason_differs_from_credential_reason(self):
+        scope_reason = self._context("192.168.1.0/24").windows_collection_reason()
+        host_reason = self._context("192.168.1.50").windows_collection_reason()
+        assert scope_reason != host_reason
+
+
+class TestUnauthenticatedFindings:
+    """An unauthenticated host assessment must produce evidence, not nothing."""
+
+    def _analyze(self, discovery: dict):
+        from app.services.analyzers.base import AnalysisContext
+
+        return analyze(
+            AnalysisContext(
+                collector_data={},
+                discovery=discovery,
+                assessment_mode="remote-unauthenticated",
+            ),
+            target="192.0.2.50",
+        )
+
+    def _discovery(self, ports: list[dict]) -> dict:
+        return {
+            "scope": "192.0.2.50",
+            "ports_probed": [80, 443, 3389],
+            "hosts": [
+                {
+                    "ip_address": "192.0.2.50",
+                    "hostname": "device.example",
+                    "mac_address": "00:11:22:33:44:55",
+                    "ports": ports,
+                    "os_guess": "",
+                    "os_confidence": "unknown",
+                }
+            ],
+            "summary": {"high_risk_exposures": []},
+        }
+
+    def test_exposed_services_are_reported(self):
+        findings = self._analyze(
+            self._discovery([{"port": 80, "service": "http", "banner": "nginx"}])
+        )
+        assert any(f["rule_id"] == "UNAUTH-001" for f in findings)
+
+    def test_cleartext_service_is_flagged(self):
+        findings = self._analyze(
+            self._discovery([{"port": 23, "service": "telnet", "banner": ""}])
+        )
+        telnet = next(f for f in findings if f["rule_id"] == "UNAUTH-002")
+        assert telnet["severity"] in ("high", "critical")
+        assert "Telnet" in telnet["title"]
+
+    def test_unresponsive_host_is_recorded_rather_than_silently_empty(self):
+        findings = self._analyze(
+            {"scope": "192.0.2.50", "ports_probed": [80, 443], "hosts": [],
+             "summary": {"high_risk_exposures": []}}
+        )
+        assert any(f["rule_id"] == "UNAUTH-000" for f in findings)
+
+    def test_rules_do_not_fire_for_an_authenticated_scan(self):
+        from app.services.analyzers.base import AnalysisContext
+
+        findings = analyze(
+            AnalysisContext(
+                collector_data={},
+                discovery=self._discovery([{"port": 23, "service": "telnet"}]),
+                assessment_mode="local-authenticated",
+            ),
+            target="local",
+        )
+        assert not any(f["rule_id"].startswith("UNAUTH-") for f in findings)

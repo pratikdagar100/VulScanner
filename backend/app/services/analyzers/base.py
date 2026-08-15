@@ -74,6 +74,8 @@ class AnalysisContext:
     profile: str = "standard"
     elevated: bool = True
     asset_criticality: str = "normal"
+    #: How the target was assessed - see ScanContext.assessment_mode.
+    assessment_mode: str = "local-authenticated"
 
     def data(self, collector: str) -> dict:
         return self.collector_data.get(collector) or {}

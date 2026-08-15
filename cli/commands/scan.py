@@ -99,7 +99,8 @@ def handle(args: argparse.Namespace, console: Console) -> int:
         "network_discovery": bool(args.discover or args.scope),
         "discovery_scope": args.scope,
         "ports": args.ports,
-        "banner_grab": bool(args.banner),
+        # Omitted unless requested, so the engine's per-mode default applies.
+        "banner_grab": True if args.banner else None,
         "vulnerability_correlation": not args.no_cve,
         "include_collectors": _split(args.include),
         "exclude_collectors": _split(args.exclude),

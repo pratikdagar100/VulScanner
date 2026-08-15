@@ -344,6 +344,167 @@ def analyze_rpc(ctx: AnalysisContext) -> Iterator[FindingDraft]:
         )
 
 
+# Services that carry credentials or management access in the clear, or that
+# should not normally be reachable on a general-purpose network.
+PLAINTEXT_SERVICES = {
+    21: ("FTP", "Credentials and file contents traverse the network unencrypted."),
+    23: ("Telnet", "Credentials and the entire session traverse the network unencrypted."),
+    80: ("HTTP", "Any credentials submitted to this service are sent unencrypted."),
+    143: ("IMAP", "Mail credentials are sent unencrypted unless STARTTLS is enforced."),
+    110: ("POP3", "Mail credentials are sent unencrypted unless STARTTLS is enforced."),
+    161: ("SNMP", "Community strings are sent unencrypted in SNMPv1/v2c."),
+    389: ("LDAP", "Directory queries and binds are unencrypted unless StartTLS is used."),
+    5900: ("VNC", "Remote control traffic is frequently unencrypted."),
+}
+
+
+@analyzer("unauthenticated_host")
+def analyze_unauthenticated_host(ctx: AnalysisContext) -> Iterator[FindingDraft]:
+    """Findings for a single host assessed without credentials.
+
+    Without authentication the exposed service surface is the only evidence
+    available, so it is reported explicitly rather than leaving the scan empty.
+    """
+    discovery = ctx.discovery
+    if not discovery or ctx.assessment_mode != "remote-unauthenticated":
+        return
+
+    hosts = discovery.get("hosts") or []
+    if not hosts:
+        # The host did not answer on any probed port. That is a result worth
+        # recording - it is not the same as "nothing was assessed".
+        yield FindingDraft(
+            rule_id="UNAUTH-000",
+            title=f"Host {discovery.get('scope')} did not respond on any probed port",
+            category=FindingCategory.SYSTEM,
+            severity=Severity.INFORMATIONAL,
+            confidence=Confidence.CONFIRMED,
+            description=(
+                f"No TCP connect probe to {discovery.get('scope')} completed across "
+                f"{len(discovery.get('ports_probed') or [])} probed ports. The host "
+                "may be offline, firewalled, or exposing only services outside the "
+                "probed set."
+            ),
+            impact=(
+                "No conclusion can be drawn about this host's security posture from "
+                "an unanswered probe."
+            ),
+            remediation=(
+                "If the host should have been reachable, confirm it is online and "
+                "that no firewall between it and the scanner is dropping traffic. "
+                "Supply WinRM credentials for an authenticated assessment."
+            ),
+            evidence={
+                "scope": discovery.get("scope"),
+                "ports_probed": discovery.get("ports_probed"),
+                "method": discovery.get("method"),
+            },
+            evidence_summary="No probed TCP port accepted a connection.",
+            detection_method="TCP connect probe",
+            configuration_weakness=False,
+            source_collector="discovery",
+        )
+        return
+
+    host = hosts[0]
+    ports = host.get("ports") or []
+    address = host.get("ip_address", "")
+
+    # An inventory of what the host exposes, so the assessment is never empty.
+    if ports:
+        listing = ", ".join(
+            f"{p.get('port')}/{p.get('service') or 'unknown'}" for p in ports
+        )
+        yield FindingDraft(
+            rule_id="UNAUTH-001",
+            instance_key=address,
+            title=f"{len(ports)} service(s) exposed on {host.get('hostname') or address}",
+            category=FindingCategory.EXPOSURE,
+            severity=Severity.LOW,
+            confidence=Confidence.CONFIRMED,
+            description=(
+                f"An unauthenticated assessment of {address} completed TCP "
+                f"connect handshakes to: {listing}."
+                + (
+                    f" The service mix suggests {host.get('os_guess')} "
+                    f"({host.get('os_confidence')} confidence)."
+                    if host.get("os_guess")
+                    else ""
+                )
+            ),
+            impact=(
+                "Each reachable service is attack surface. Without credentials "
+                "VulScanner cannot assess the configuration or patch level behind "
+                "these services, so this is an outside view only."
+            ),
+            remediation=(
+                "Confirm every exposed service is required on this interface. "
+                "Restrict the rest at the host or network firewall, and supply "
+                "credentials for an authenticated assessment of what remains."
+            ),
+            evidence={
+                "ip_address": address,
+                "hostname": host.get("hostname"),
+                "mac_address": host.get("mac_address"),
+                "vendor": host.get("vendor"),
+                "ports": ports,
+                "os_guess": host.get("os_guess"),
+                "os_confidence": host.get("os_confidence"),
+                "os_evidence": host.get("os_evidence"),
+                "discovery_method": host.get("discovery_method"),
+                "assessment": "unauthenticated - no credentials supplied",
+            },
+            evidence_summary=f"Open TCP ports: {listing}",
+            detection_method="TCP connect probe with banner reading",
+            exposure=ExposureLevel.NETWORK,
+            service_exposed=True,
+            configuration_weakness=False,
+            source_collector="discovery",
+        )
+
+    # Cleartext or management services reachable over the network.
+    for port in ports:
+        number = port.get("port")
+        entry = PLAINTEXT_SERVICES.get(number)
+        if not entry:
+            continue
+        name, rationale = entry
+        banner = (port.get("banner") or "").strip()
+        yield FindingDraft(
+            rule_id="UNAUTH-002",
+            instance_key=f"{address}:{number}",
+            title=f"{name} reachable without transport encryption on {address}",
+            category=FindingCategory.EXPOSURE,
+            severity=Severity.HIGH if number in (21, 23, 5900) else Severity.MEDIUM,
+            confidence=Confidence.CONFIRMED,
+            description=(
+                f"{name} answered on {address}:{number}. {rationale}"
+                + (f" Service banner: {banner[:160]}" if banner else "")
+            ),
+            impact=(
+                "Anyone able to observe traffic between a client and this service "
+                "can read the session, including any credentials it carries."
+            ),
+            remediation=(
+                f"Move {name} to its encrypted equivalent (for example HTTPS, SFTP "
+                "or SSH), or restrict it to a management network. If this is a "
+                "network appliance, enable HTTPS for its administration interface."
+            ),
+            evidence={
+                "ip_address": address,
+                "port": number,
+                "service": port.get("service"),
+                "banner": banner or None,
+                "assessment": "unauthenticated",
+            },
+            evidence_summary=f"{name} answered on {address}:{number}",
+            detection_method="TCP connect probe with banner reading",
+            exposure=ExposureLevel.NETWORK,
+            service_exposed=True,
+            source_collector="discovery",
+        )
+
+
 @analyzer("discovery_exposure")
 def analyze_discovery(ctx: AnalysisContext) -> Iterator[FindingDraft]:
     """Findings raised from network discovery of other hosts."""

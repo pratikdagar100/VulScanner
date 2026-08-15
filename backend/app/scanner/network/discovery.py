@@ -302,10 +302,16 @@ class NetworkDiscovery:
 
         open_ports.sort(key=lambda p: p.port)
         if self.banner_grab:
+            # A connect probe only needs the handshake, but a banner needs the
+            # service to actually respond - which routinely takes longer than
+            # the probe timeout. Give the read its own, larger budget.
+            banner_timeout = max(self.timeout, 2.5)
             for entry in open_ports:
                 if self.cancel_check():
                     break
-                entry.banner = grab_banner(host.ip_address, entry.port, self.timeout)
+                entry.banner = grab_banner(
+                    host.ip_address, entry.port, banner_timeout
+                )
 
         host.ports = open_ports
         host.os_guess, host.os_confidence, host.os_evidence = guess_os(

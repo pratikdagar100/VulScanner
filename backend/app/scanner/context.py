@@ -52,13 +52,68 @@ class ScanContext:
 
     @property
     def is_windows_target(self) -> bool:
-        """Whether Windows collectors can run against this target."""
+        """Whether authenticated Windows collection can run against this target."""
         if self.is_network_scope:
             return False
         if self.is_local:
             return platform.system() == "Windows"
         # Remote host collection needs WinRM credentials.
         return self.credential is not None
+
+    @property
+    def assessment_mode(self) -> str:
+        """How this target is being assessed.
+
+        ``local-authenticated``     full collection on this machine
+        ``remote-authenticated``    full collection over WinRM
+        ``remote-unauthenticated``  no credentials, so the host is assessed from
+                                    the outside only - ports, services, banners
+        ``network-discovery``       a scope rather than a single host
+        ``unsupported-platform``    local target, but not running on Windows
+        """
+        if self.is_network_scope:
+            return "network-discovery"
+        if self.is_local:
+            return (
+                "local-authenticated"
+                if platform.system() == "Windows"
+                else "unsupported-platform"
+            )
+        return (
+            "remote-authenticated"
+            if self.credential
+            else "remote-unauthenticated"
+        )
+
+    @property
+    def is_unauthenticated_remote(self) -> bool:
+        return self.assessment_mode == "remote-unauthenticated"
+
+    def windows_collection_reason(self) -> str:
+        """Why authenticated Windows collection is unavailable, specifically.
+
+        A generic "requires a Windows target" tells an operator nothing about
+        what to change, so each case explains itself and what to do next.
+        """
+        mode = self.assessment_mode
+        if mode == "network-discovery":
+            return (
+                "Not applicable to a network scope scan: VulScanner assesses the "
+                "hosts it discovers from the outside, and does not log in to them."
+            )
+        if mode == "unsupported-platform":
+            return (
+                f"Windows collection requires a Windows host; VulScanner is "
+                f"running on {platform.system()}. Network assessment is unaffected."
+            )
+        if mode == "remote-unauthenticated":
+            return (
+                f"No credentials were supplied for {self.target}, so VulScanner "
+                "performed an unauthenticated assessment (ports, services and "
+                "banners) instead. Supply WinRM credentials to collect Windows "
+                "configuration, patches and accounts."
+            )
+        return "Collector is unavailable for this target."
 
     @property
     def computer_name(self) -> str | None:

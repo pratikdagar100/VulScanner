@@ -93,7 +93,7 @@ class BaseCollector(ABC):
     def supported(self) -> tuple[bool, str]:
         """Return ``(is_supported, reason)`` for the current context."""
         if not self.context.is_windows_target:
-            return False, "Collector requires a Windows target."
+            return False, self.context.windows_collection_reason()
         return True, ""
 
     @abstractmethod

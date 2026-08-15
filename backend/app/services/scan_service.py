@@ -337,6 +337,7 @@ class ScanService:
                 profile=output.profile,
                 elevated=output.elevated,
                 asset_criticality=asset.criticality if asset else "normal",
+                assessment_mode=output.assessment_mode,
             )
             findings = analyze(context, target=output.target)
 
@@ -864,6 +865,7 @@ class ScanService:
         scan.finished_at = output.finished_at or datetime.now(tz=timezone.utc)
         scan.duration_seconds = output.duration_seconds
         scan.scanner_host = output.scanner_host
+        scan.options = {**(scan.options or {}), "assessment_mode": output.assessment_mode}
         scan.status = {
             "completed": ScanStatus.COMPLETED.value,
             "partial": ScanStatus.PARTIAL.value,

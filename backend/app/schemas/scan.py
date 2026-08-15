@@ -30,11 +30,13 @@ class ScanOptions(BaseModel):
         default=None,
         description="Port range for discovery, e.g. '22,80,443,8000-8100'.",
     )
-    discovery_profile: str = Field(default="safe", pattern="^(safe|standard|custom)$")
+    # None lets the engine pick: a broader sweep for a single unauthenticated
+    # host, the safe set for a whole network.
+    discovery_profile: str | None = Field(default=None, pattern="^(safe|standard|custom)$")
     network_discovery: bool = False
     discovery_scope: str | None = None
     max_discovery_hosts: int = Field(default=4096, ge=1, le=65536)
-    banner_grab: bool = False
+    banner_grab: bool | None = None
     resolve_names: bool = True
     vulnerability_correlation: bool = True
     cve_product_limit: int = Field(default=20, ge=0, le=200)
