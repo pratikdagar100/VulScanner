@@ -212,3 +212,60 @@ class TestApiEndpoints:
     def test_audit_log_never_contains_a_password(self, api_client):
         body = api_client.get("/api/audit").text
         assert "TestAdminPass" not in body
+
+
+class TestSettingsParsing:
+    """Comma-separated list settings must survive a real .env file.
+
+    pydantic-settings JSON-decodes complex fields read from a dotenv source
+    before validators run, which previously made a plain comma-separated
+    VULSCANNER_CORS_ORIGINS crash startup. NoDecode keeps the raw string.
+    """
+
+    def _load(self, tmp_path, monkeypatch, body: str):
+        from pydantic_settings import SettingsConfigDict
+
+        from app.core.config import Settings
+
+        env_file = tmp_path / ".env"
+        env_file.write_text(body, encoding="utf-8")
+        # Environment variables outrank the dotenv file, so clear them first.
+        for name in ("VULSCANNER_CORS_ORIGINS", "VULSCANNER_AUTHORIZED_SCOPES"):
+            monkeypatch.delenv(name, raising=False)
+
+        class FileSettings(Settings):
+            model_config = SettingsConfigDict(
+                env_prefix="VULSCANNER_", env_file=env_file, extra="ignore"
+            )
+
+        return FileSettings()
+
+    def test_comma_separated_values_parse(self, tmp_path, monkeypatch):
+        settings = self._load(
+            tmp_path,
+            monkeypatch,
+            "VULSCANNER_CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173\n"
+            "VULSCANNER_AUTHORIZED_SCOPES=10.0.0.0/8,192.168.1.0/24\n",
+        )
+        assert settings.cors_origins == [
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+        ]
+        assert settings.authorized_scopes == ["10.0.0.0/8", "192.168.1.0/24"]
+
+    def test_single_value_parses(self, tmp_path, monkeypatch):
+        settings = self._load(
+            tmp_path, monkeypatch, "VULSCANNER_AUTHORIZED_SCOPES=192.168.1.0/24\n"
+        )
+        assert settings.authorized_scopes == ["192.168.1.0/24"]
+
+    def test_whitespace_is_trimmed(self, tmp_path, monkeypatch):
+        settings = self._load(
+            tmp_path, monkeypatch, "VULSCANNER_AUTHORIZED_SCOPES= 10.0.0.0/8 , 172.16.0.0/12 \n"
+        )
+        assert settings.authorized_scopes == ["10.0.0.0/8", "172.16.0.0/12"]
+
+    def test_defaults_apply_when_absent(self, tmp_path, monkeypatch):
+        settings = self._load(tmp_path, monkeypatch, "VULSCANNER_LOG_LEVEL=INFO\n")
+        assert "127.0.0.0/8" in settings.authorized_scopes
+        assert settings.cors_origins

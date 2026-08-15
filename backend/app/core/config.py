@@ -9,9 +9,10 @@ from __future__ import annotations
 import secrets
 from functools import lru_cache
 from pathlib import Path
+from typing import Annotated
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 APP_NAME = "VulScanner"
 APP_TITLE = "VulScanner API"
@@ -60,12 +61,14 @@ class Settings(BaseSettings):
     database_url: str = f"sqlite:///{(REPO_ROOT / 'vulscanner.db').as_posix()}"
 
     # --- cors -------------------------------------------------------------
-    cors_origins: list[str] = Field(
+    # NoDecode stops pydantic-settings JSON-decoding the raw value, so a plain
+    # comma-separated list in .env reaches the validator below intact.
+    cors_origins: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"]
     )
 
     # --- scanning ---------------------------------------------------------
-    authorized_scopes: list[str] = Field(
+    authorized_scopes: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: [
             "127.0.0.0/8",
             "192.168.0.0/16",
