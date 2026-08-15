@@ -26,6 +26,31 @@ APP_DESCRIPTION = (
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
+SQLITE_PREFIX = "sqlite:///"
+
+
+def _resolve_sqlite_url(url: str) -> str:
+    """Make a relative SQLite URL absolute, anchored to the repository root.
+
+    Non-SQLite URLs, in-memory databases and already-absolute paths are
+    returned unchanged.
+    """
+    if not url.startswith(SQLITE_PREFIX):
+        return url
+
+    path_part = url[len(SQLITE_PREFIX) :]
+    if not path_part or path_part.startswith(":memory:"):
+        return url
+
+    # A leading slash (POSIX absolute) or a drive letter (Windows) is already
+    # absolute; anything else is relative to whatever the working directory is.
+    if path_part.startswith("/") or (len(path_part) > 1 and path_part[1] == ":"):
+        return url
+
+    resolved = (REPO_ROOT / path_part.lstrip("./")).resolve()
+    return f"{SQLITE_PREFIX}{resolved.as_posix()}"
+
+
 def _split_csv(value: object) -> list[str]:
     if value is None:
         return []
@@ -107,6 +132,19 @@ class Settings(BaseSettings):
     @classmethod
     def _parse_csv(cls, value: object) -> list[str]:
         return _split_csv(value)
+
+    @field_validator("database_url", mode="after")
+    @classmethod
+    def _anchor_sqlite_path(cls, value: str) -> str:
+        """Resolve a relative SQLite path against the repository root.
+
+        Without this, ``sqlite:///./vulscanner.db`` points at a different file
+        depending on the working directory: the API launched from ``backend/``
+        and the CLI launched from the repository root would silently use two
+        separate databases, and ``alembic upgrade`` would migrate whichever one
+        happened to be next to the shell.
+        """
+        return _resolve_sqlite_url(value)
 
     @field_validator("log_level", mode="before")
     @classmethod

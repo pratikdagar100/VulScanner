@@ -49,17 +49,30 @@ if ($Production -and -not (Test-Path (Join-Path $RepoRoot 'frontend\dist\index.h
 
 $jobs = @()
 
+# Start-Process joins its ArgumentList with spaces and adds no quoting, so any
+# path containing a space (C:\Users\First Last\...) would be split into two
+# arguments. Quote each one that needs it.
+function Format-ProcessArgument {
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Value)
+    if ($Value -match '\s' -and $Value -notmatch '^".*"$') { return '"' + $Value + '"' }
+    return $Value
+}
+
 # --- API -------------------------------------------------------------------
+# uvicorn runs with the backend directory as its working directory, so the
+# application package resolves without passing a path at all.
+$backendDir = Join-Path $RepoRoot 'backend'
 $apiArgs = @(
     '-m', 'uvicorn', 'app.main:app',
-    '--app-dir', (Join-Path $RepoRoot 'backend'),
     '--host', $bindAddress,
     '--port', $ApiPort
 )
 if (-not $Production) { $apiArgs += '--reload' }
+$apiArgs = $apiArgs | ForEach-Object { Format-ProcessArgument $_ }
 
 Write-Host "[*] Starting the VulScanner API..." -ForegroundColor Cyan
-$api = Start-Process -FilePath $Python -ArgumentList $apiArgs -PassThru -NoNewWindow
+$api = Start-Process -FilePath $Python -ArgumentList $apiArgs `
+    -WorkingDirectory $backendDir -PassThru -NoNewWindow
 $jobs += $api
 
 # Wait for the API to answer before starting anything that depends on it.
@@ -85,11 +98,42 @@ if (-not $ApiOnly) {
     } else {
         Write-Host "[*] Starting the web application..." -ForegroundColor Cyan
         $frontendDir = Join-Path $RepoRoot 'frontend'
-        $command = if ($Production) { "run preview -- --port $WebPort" } else { "run dev -- --port $WebPort" }
-        $web = Start-Process -FilePath $npm.Source -ArgumentList $command `
+
+        if (-not (Test-Path (Join-Path $frontendDir 'node_modules'))) {
+            Write-Host "    [!]  frontend dependencies are missing - run .\scripts\install.ps1" -ForegroundColor Yellow
+        }
+
+        $script = if ($Production) { 'preview' } else { 'dev' }
+
+        # Get-Command resolves npm to npm.ps1 (or the extensionless shell
+        # script) depending on the Node install, and Start-Process cannot
+        # execute either - it fails with "%1 is not a valid Win32 application".
+        # Use the npm.cmd launcher that sits beside whichever one was found.
+        $npmCmd = Join-Path (Split-Path $npm.Source) 'npm.cmd'
+        if (-not (Test-Path $npmCmd)) { $npmCmd = $npm.Source }
+
+        $web = Start-Process -FilePath $npmCmd `
+            -ArgumentList @('run', $script, '--', '--port', $WebPort) `
             -WorkingDirectory $frontendDir -PassThru -NoNewWindow
         $jobs += $web
-        Start-Sleep -Seconds 4
+
+        # Wait for the dev server to bind rather than assuming a fixed delay.
+        # Vite binds to localhost, which resolves to ::1 first on Windows, so
+        # probing 127.0.0.1 would report a false failure.
+        $webReady = $false
+        foreach ($attempt in 1..30) {
+            Start-Sleep -Milliseconds 700
+            try {
+                $null = Invoke-WebRequest "http://localhost:$WebPort" -TimeoutSec 2 -UseBasicParsing
+                $webReady = $true
+                break
+            } catch { }
+        }
+        if ($webReady) {
+            Write-Host "    [ok] Web application is responding." -ForegroundColor Green
+        } else {
+            Write-Host "    [!]  Web application did not answer within 20s." -ForegroundColor Yellow
+        }
     }
 }
 

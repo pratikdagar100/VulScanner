@@ -265,6 +265,36 @@ class TestSettingsParsing:
         )
         assert settings.authorized_scopes == ["10.0.0.0/8", "172.16.0.0/12"]
 
+
+    def test_relative_sqlite_path_is_anchored_to_the_repo_root(self):
+        """A relative SQLite URL must not depend on the working directory.
+
+        The API launched from backend/ and the CLI launched from the repo root
+        would otherwise open two different databases, and alembic would migrate
+        whichever file sat next to the shell.
+        """
+        from app.core.config import REPO_ROOT, _resolve_sqlite_url
+
+        resolved = _resolve_sqlite_url("sqlite:///./vulscanner.db")
+        assert resolved.startswith("sqlite:///")
+        assert REPO_ROOT.as_posix() in resolved
+        # Bare relative form resolves to the same file as the ./ form.
+        assert _resolve_sqlite_url("sqlite:///vulscanner.db") == resolved
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "postgresql+psycopg://user:pass@localhost:5432/vulscanner",
+            "sqlite:///:memory:",
+            "sqlite:////var/lib/vulscanner/data.db",
+            "sqlite:///C:/data/vulscanner.db",
+        ],
+    )
+    def test_absolute_and_non_sqlite_urls_are_untouched(self, url):
+        from app.core.config import _resolve_sqlite_url
+
+        assert _resolve_sqlite_url(url) == url
+
     def test_defaults_apply_when_absent(self, tmp_path, monkeypatch):
         settings = self._load(tmp_path, monkeypatch, "VULSCANNER_LOG_LEVEL=INFO\n")
         assert "127.0.0.0/8" in settings.authorized_scopes
