@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { Banner } from '@/components/ui';
-import { api } from '@/services/api';
+import { API_BASE_URL, IS_UI_ONLY_BUILD, api } from '@/services/api';
 
 export default function Login() {
   const navigate = useNavigate();
@@ -10,6 +10,19 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // null = not yet known, false = the API could not be reached at all.
+  const [apiReachable, setApiReachable] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    if (IS_UI_ONLY_BUILD) {
+      setApiReachable(false);
+      return;
+    }
+    api
+      .health()
+      .then(() => setApiReachable(true))
+      .catch(() => setApiReachable(false));
+  }, []);
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -73,9 +86,42 @@ export default function Login() {
             />
           </div>
 
+          {apiReachable === false && (
+            <Banner tone="warning">
+              <p className="font-semibold">No VulScanner API is reachable.</p>
+              <p className="mt-1.5">
+                This is the VulScanner interface only. Scanning runs on your own
+                machine — the engine needs Windows, PowerShell and local network
+                access, so it cannot be hosted publicly.
+              </p>
+              <p className="mt-1.5">
+                Run the platform locally with{' '}
+                <code className="font-mono">.\scripts\start.ps1</code> and open{' '}
+                <a
+                  href="http://localhost:5173"
+                  className="underline hover:text-white"
+                >
+                  localhost:5173
+                </a>
+                .
+                {API_BASE_URL && (
+                  <>
+                    {' '}
+                    This build is configured to talk to{' '}
+                    <span className="font-mono">{API_BASE_URL}</span>.
+                  </>
+                )}
+              </p>
+            </Banner>
+          )}
+
           {error && <Banner tone="danger">{error}</Banner>}
 
-          <button type="submit" className="btn-primary w-full" disabled={busy}>
+          <button
+            type="submit"
+            className="btn-primary w-full"
+            disabled={busy || apiReachable === false}
+          >
             {busy ? 'Signing in…' : 'Sign in'}
           </button>
 

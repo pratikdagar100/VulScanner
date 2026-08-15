@@ -27,6 +27,18 @@ import type {
   Vulnerability,
 } from '@/types';
 
+/**
+ * Where the VulScanner API lives.
+ *
+ * Empty (the default) means same-origin, which is what the dev server proxy and
+ * a self-hosted deployment behind one reverse proxy both provide. Set
+ * VITE_API_BASE_URL at build time to point the UI at an API on another origin.
+ */
+export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
+
+/** True when this build has no API to talk to (a UI-only deployment). */
+export const IS_UI_ONLY_BUILD = import.meta.env.VITE_UI_ONLY === 'true';
+
 const ACCESS_KEY = 'vulscanner.access';
 const REFRESH_KEY = 'vulscanner.refresh';
 const IDENTITY_KEY = 'vulscanner.identity';
@@ -77,7 +89,8 @@ export const tokens = {
 type Query = Record<string, string | number | boolean | undefined | null>;
 
 function buildUrl(path: string, query?: Query): string {
-  const url = new URL(path, window.location.origin);
+  const base = API_BASE_URL || window.location.origin;
+  const url = new URL(path, base);
   if (query) {
     for (const [key, value] of Object.entries(query)) {
       if (value !== undefined && value !== null && value !== '') {
@@ -85,13 +98,14 @@ function buildUrl(path: string, query?: Query): string {
       }
     }
   }
-  return url.pathname + url.search;
+  // Same-origin requests stay relative so the dev proxy keeps working.
+  return API_BASE_URL ? url.toString() : url.pathname + url.search;
 }
 
 async function refreshAccessToken(): Promise<boolean> {
   const refresh = tokens.refresh();
   if (!refresh) return false;
-  const response = await fetch('/api/auth/refresh', {
+  const response = await fetch(buildUrl('/api/auth/refresh'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ refresh_token: refresh }),
@@ -284,7 +298,7 @@ export const api = {
   reportDownloadUrl: (id: number) => `/api/reports/${id}/download`,
   async downloadReport(report: Report): Promise<void> {
     // The download endpoint requires the bearer token, so fetch then save.
-    const response = await fetch(`/api/reports/${report.id}/download`, {
+    const response = await fetch(buildUrl(`/api/reports/${report.id}/download`), {
       headers: { Authorization: `Bearer ${tokens.access() ?? ''}` },
     });
     if (!response.ok) throw new ApiError('Download failed', response.status);
@@ -322,9 +336,10 @@ export function subscribeToScan(
     return () => undefined;
   }
 
+  const httpBase = API_BASE_URL || window.location.origin;
+  const socketBase = httpBase.replace(/^http/, 'ws');
   const socket = new WebSocket(
-    `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}` +
-      `/api/scans/${scanId}/ws?token=${encodeURIComponent(access)}`,
+    `${socketBase}/api/scans/${scanId}/ws?token=${encodeURIComponent(access)}`,
   );
 
   socket.onmessage = (message) => {
